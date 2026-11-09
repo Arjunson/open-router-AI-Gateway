@@ -1,32 +1,73 @@
 import { Messages } from "../types";
-import { BaseLlm, LlmResponse } from "./Base";
+import { BaseLlm, LlmResponse, StreamChunk } from "./Base";
 import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({
-    apiKey: process.env.GOOGLE_API_KEY
+  apiKey: process.env.GOOGLE_API_KEY,
 });
 
-
 export class Gemini extends BaseLlm {
-    static async chat(model: string, messages: Messages): Promise<LlmResponse> {
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: messages.map(message => ({
-                text: message.content,
-                role: message.role
-            }))
-        });
+  static async chat(completionId: string, model: string, messages: Messages): Promise<LlmResponse> {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: messages.map((message) => ({
+        text: message.content,
+        role: message.role,
+      })),
+    });
 
-        return {
-            outputTokensConsumed: response.usageMetadata?.candidatesTokenCount!,
-            inputTokensConsumed: response.usageMetadata?.promptTokenCount!,
-            completions: {
-                choices: [{
-                    message: {
-                        content: response.text!
-                    }
-                }]
-            }
-        }
+    return {
+      outputTokensConsumed: response.usageMetadata?.candidatesTokenCount ?? 0,
+      inputTokensConsumed: response.usageMetadata?.promptTokenCount ?? 0,
+      id: completionId,
+      model,
+      created: Math.floor(Date.now() / 1000),
+      object: "chat.completion",
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: response.text ?? "",
+            },
+          finish_reason: "stop"
+          },
+        ],
+    };
+  }
+
+  static async *streamChat(
+    completionId: string,
+    model: string,
+    messages: Messages,
+  ): AsyncGenerator<StreamChunk> {
+    const response = await ai.models.generateContentStream({
+      model: model,
+      contents: messages.map((message) => ({
+        text: message.content,
+        role: message.role,
+      })),
+    });
+
+    for await (const chunk of response) {
+      const text = chunk.text;
+      if (text) {
+        yield {
+          id: completionId,
+          object: "chat.completion.chunk",
+          model,
+          created: Math.floor(Date.now() / 1000),
+          choices: [
+            {
+              index: 0,
+              delta: {
+                content: text,
+              },
+              finish_reason: null
+            },
+          ],
+        };
+      }
     }
+  }
 }
